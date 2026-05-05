@@ -1,0 +1,22 @@
+dataset: scifact
+
+paths:
+  raw_data_dir: data/raw/beir
+  embedding_dir: data/embeddings/scifact
+  shard_dir: data/shards/scifact
+  result_dir: results/pilot/scifact
+
+embedding:
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  batch_size: 32
+  normalize_embeddings: true
+
+sharding:
+  type: random
+  num_shards: 32
+  seed: 42
+
+experiment:
+  method: single_centroid
+  top_b_values: [1, 3, 5]
+  seed: 42
