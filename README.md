@@ -214,13 +214,17 @@ Dataset: scifactNum corpus docs: 5183Num queries: 300Num qrels queries: 300
 ### 6.2 SciFact embedding 생성
 python -m src.embedding.build_embeddings
 정상 실행 시 다음 파일들이 생성된다.
-data/embeddings/scifact/doc_embeddings.npydata/embeddings/scifact/query_embeddings.npydata/embeddings/scifact/doc_ids.jsondata/embeddings/scifact/query_ids.json
+data/embeddings/scifact/doc_embeddings.npy
+data/embeddings/scifact/query_embeddings.npy
+data/embeddings/scifact/doc_ids.json
+data/embeddings/scifact/query_ids.json
 
 ## 7. 주의 사항
 embedding matrix와 id mapping의 순서는 반드시 보존되어야 한다.
 즉, 다음 관계가 항상 유지되어야 한다.
 
 > doc_embeddings[i]   == doc_ids[i]에 해당하는 문서 embedding
+> 
 > query_embeddings[j] == query_ids[j]에 해당하는 query embedding
 
 이 mapping이 깨지면 shard 구성, centroid 계산, recall 계산 결과가 모두 잘못된다.
