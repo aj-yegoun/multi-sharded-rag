@@ -14,6 +14,13 @@ from src.representation.single_centroid import compute_single_centroids
 from src.sharding.heterogeneous_shard import make_heterogeneous_shards
 from src.sharding.random_shard import make_random_shards
 from src.sharding.topic_shard import make_topic_based_shards
+from src.grouping.build_groups import (
+    build_groups_from_shard_centroids,
+    print_group_summary,
+)
+from src.ranking.group_single_ranker import rank_shards_group_single_centroid
+from src.ranking.group_multi_ranker import rank_shards_group_multi_centroid
+from src.evaluation.group_recall import group_recall_at_g, is_group_drop_error
 
 
 def build_doc_to_shard(shards: dict[int, list[str]]) -> dict[str, int]:
@@ -136,6 +143,108 @@ def evaluate_single_centroid(
 
     return results
 
+def evaluate_group_single_centroid(
+    dataset_name: str,
+    shard_type: str,
+    num_shards: int,
+    num_groups: int,
+    num_selected_groups: int,
+    top_b_values: list[int],
+    seed: int,
+    query_embeddings: np.ndarray,
+    query_ids: list[str],
+    relevant_shards_by_query: dict[str, set[int]],
+    groups: dict[int, list[int]],
+    shard_to_group: dict[int, int],
+    group_centroids: dict[int, np.ndarray],
+    shard_centroids: dict[int, np.ndarray],
+) -> list[dict]:
+    """
+    Grouping + Single-Centroid ranking 평가.
+    """
+    query_id_to_index = {query_id: idx for idx, query_id in enumerate(query_ids)}
+    results = []
+
+    print("[INFO] Running Grouping + Single-Centroid ranking...")
+
+    for top_b in top_b_values:
+        shard_recalls = []
+        group_recalls = []
+        group_drop_errors = []
+
+        for query_id, relevant_shards in relevant_shards_by_query.items():
+            if query_id not in query_id_to_index:
+                continue
+
+            query_idx = query_id_to_index[query_id]
+            query_embedding = query_embeddings[query_idx]
+
+            ranked, selected_groups = rank_shards_group_single_centroid(
+                query_embedding=query_embedding,
+                group_centroids=group_centroids,
+                groups=groups,
+                shard_centroids=shard_centroids,
+                num_selected_groups=num_selected_groups,
+            )
+
+            selected_shards = [shard_id for shard_id, _score in ranked[:top_b]]
+
+            shard_recall = shard_recall_at_b(
+                selected_shards=selected_shards,
+                relevant_shards=relevant_shards,
+            )
+
+            group_recall = group_recall_at_g(
+                selected_groups=selected_groups,
+                relevant_shards=relevant_shards,
+                shard_to_group=shard_to_group,
+            )
+
+            group_drop_error = is_group_drop_error(
+                selected_groups=selected_groups,
+                relevant_shards=relevant_shards,
+                shard_to_group=shard_to_group,
+            )
+
+            shard_recalls.append(shard_recall)
+            group_recalls.append(group_recall)
+            group_drop_errors.append(float(group_drop_error))
+
+        mean_shard_recall = float(np.mean(shard_recalls)) if shard_recalls else 0.0
+        mean_group_recall = float(np.mean(group_recalls)) if group_recalls else 0.0
+        group_drop_error_rate = (
+            float(np.mean(group_drop_errors)) if group_drop_errors else 0.0
+        )
+
+        row = {
+            "dataset": dataset_name,
+            "shard_type": shard_type,
+            "method": "group_single_centroid",
+            "num_shards": num_shards,
+            "num_groups": num_groups,
+            "num_selected_groups": num_selected_groups,
+            "centroids_per_shard": 1,
+            "top_b": top_b,
+            "mean_shard_recall": mean_shard_recall,
+            "mean_group_recall": mean_group_recall,
+            "group_drop_error_rate": group_drop_error_rate,
+            "accessed_shard_ratio": top_b / num_shards,
+            "accessed_group_ratio": num_selected_groups / num_groups,
+            "num_queries": len(shard_recalls),
+            "seed": seed,
+        }
+
+        results.append(row)
+
+        print(
+            f"[RESULT] method=group_single_centroid, "
+            f"top-B={top_b}, "
+            f"Shard Recall={mean_shard_recall:.4f}, "
+            f"Group Recall={mean_group_recall:.4f}, "
+            f"Group Drop Error={group_drop_error_rate:.4f}"
+        )
+
+    return results
 
 def evaluate_multi_centroid(
     dataset_name: str,
@@ -221,6 +330,123 @@ def evaluate_multi_centroid(
 
     return results
 
+def evaluate_group_multi_centroid(
+    dataset_name: str,
+    shard_type: str,
+    num_shards: int,
+    num_groups: int,
+    num_selected_groups: int,
+    top_b_values: list[int],
+    centroid_k_values: list[int],
+    seed: int,
+    query_embeddings: np.ndarray,
+    query_ids: list[str],
+    relevant_shards_by_query: dict[str, set[int]],
+    groups: dict[int, list[int]],
+    shard_to_group: dict[int, int],
+    group_centroids: dict[int, np.ndarray],
+    shards: dict[int, list[str]],
+    doc_ids: list[str],
+    doc_embeddings: np.ndarray,
+) -> list[dict]:
+    """
+    Grouping + Multi-Centroid ranking 평가.
+    """
+    query_id_to_index = {query_id: idx for idx, query_id in enumerate(query_ids)}
+    results = []
+
+    print("[INFO] Running Grouping + Multi-Centroid ranking...")
+
+    for k in centroid_k_values:
+        print(f"[INFO] Computing multi centroids for group_multi: k={k}")
+
+        shard_multi_centroids = compute_multi_centroids(
+            shards=shards,
+            doc_ids=doc_ids,
+            doc_embeddings=doc_embeddings,
+            k=k,
+            seed=seed,
+        )
+
+        for top_b in top_b_values:
+            shard_recalls = []
+            group_recalls = []
+            group_drop_errors = []
+
+            for query_id, relevant_shards in relevant_shards_by_query.items():
+                if query_id not in query_id_to_index:
+                    continue
+
+                query_idx = query_id_to_index[query_id]
+                query_embedding = query_embeddings[query_idx]
+
+                ranked, selected_groups = rank_shards_group_multi_centroid(
+                    query_embedding=query_embedding,
+                    group_centroids=group_centroids,
+                    groups=groups,
+                    shard_multi_centroids=shard_multi_centroids,
+                    num_selected_groups=num_selected_groups,
+                )
+
+                selected_shards = [shard_id for shard_id, _score in ranked[:top_b]]
+
+                shard_recall = shard_recall_at_b(
+                    selected_shards=selected_shards,
+                    relevant_shards=relevant_shards,
+                )
+
+                group_recall = group_recall_at_g(
+                    selected_groups=selected_groups,
+                    relevant_shards=relevant_shards,
+                    shard_to_group=shard_to_group,
+                )
+
+                group_drop_error = is_group_drop_error(
+                    selected_groups=selected_groups,
+                    relevant_shards=relevant_shards,
+                    shard_to_group=shard_to_group,
+                )
+
+                shard_recalls.append(shard_recall)
+                group_recalls.append(group_recall)
+                group_drop_errors.append(float(group_drop_error))
+
+            mean_shard_recall = float(np.mean(shard_recalls)) if shard_recalls else 0.0
+            mean_group_recall = float(np.mean(group_recalls)) if group_recalls else 0.0
+            group_drop_error_rate = (
+                float(np.mean(group_drop_errors)) if group_drop_errors else 0.0
+            )
+
+            row = {
+                "dataset": dataset_name,
+                "shard_type": shard_type,
+                "method": "group_multi_centroid",
+                "num_shards": num_shards,
+                "num_groups": num_groups,
+                "num_selected_groups": num_selected_groups,
+                "centroids_per_shard": k,
+                "top_b": top_b,
+                "mean_shard_recall": mean_shard_recall,
+                "mean_group_recall": mean_group_recall,
+                "group_drop_error_rate": group_drop_error_rate,
+                "accessed_shard_ratio": top_b / num_shards,
+                "accessed_group_ratio": num_selected_groups / num_groups,
+                "num_queries": len(shard_recalls),
+                "seed": seed,
+            }
+
+            results.append(row)
+
+            print(
+                f"[RESULT] method=group_multi_centroid, "
+                f"k={k}, top-B={top_b}, "
+                f"Shard Recall={mean_shard_recall:.4f}, "
+                f"Group Recall={mean_group_recall:.4f}, "
+                f"Group Drop Error={group_drop_error_rate:.4f}"
+            )
+
+    return results
+
 
 def print_shard_size_summary(shards: dict[int, list[str]]) -> None:
     sizes = [len(docs) for docs in shards.values()]
@@ -288,6 +514,18 @@ def run_scifact_pilot():
         doc_embeddings=doc_embeddings,
     )
 
+    num_groups = 4
+    # num_selected_groups = 1
+    num_selected_group_values = [1, 2, 3]
+
+    print("[INFO] Building groups from shard centroids...")
+    groups, shard_to_group, group_centroids = build_groups_from_shard_centroids(
+        shard_centroids=shard_centroids,
+        num_groups=num_groups,
+        seed=seed,
+    )
+
+    print_group_summary(groups)
     results = []
 
     single_results = evaluate_single_centroid(
@@ -319,7 +557,53 @@ def run_scifact_pilot():
     )
     results.extend(multi_results)
 
-    output_path = result_dir / f"scifact_{shard_type}_single_multi_results.csv"
+    for num_selected_groups in num_selected_group_values:
+        print(
+            f"[INFO] Evaluating grouping methods: "
+            f"num_selected_groups={num_selected_groups}/{num_groups}"
+        )
+
+        group_single_results = evaluate_group_single_centroid(
+            dataset_name=dataset_name,
+            shard_type=shard_type,
+            num_shards=num_shards,
+            num_groups=num_groups,
+            num_selected_groups=num_selected_groups,
+            top_b_values=top_b_values,
+            seed=seed,
+            query_embeddings=query_embeddings,
+            query_ids=query_ids,
+            relevant_shards_by_query=relevant_shards_by_query,
+            groups=groups,
+            shard_to_group=shard_to_group,
+            group_centroids=group_centroids,
+            shard_centroids=shard_centroids,
+        )
+        results.extend(group_single_results)
+
+        group_multi_results = evaluate_group_multi_centroid(
+            dataset_name=dataset_name,
+            shard_type=shard_type,
+            num_shards=num_shards,
+            num_groups=num_groups,
+            num_selected_groups=num_selected_groups,
+            top_b_values=top_b_values,
+            centroid_k_values=centroid_k_values,
+            seed=seed,
+            query_embeddings=query_embeddings,
+            query_ids=query_ids,
+            relevant_shards_by_query=relevant_shards_by_query,
+            groups=groups,
+            shard_to_group=shard_to_group,
+            group_centroids=group_centroids,
+            shards=shards,
+            doc_ids=doc_ids,
+            doc_embeddings=doc_embeddings,
+        )
+        results.extend(group_multi_results)
+
+
+    output_path = result_dir / f"scifact_{shard_type}_with_grouping_results.csv"
     save_results_csv(results, output_path)
 
 
