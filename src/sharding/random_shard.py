@@ -9,6 +9,7 @@ def make_random_shards(
 ) -> dict[int, list[str]]:
     """
     doc_ids를 랜덤하게 num_shards개의 shard로 분할한다.
+    pilot 실험용으로, 본 실험에서는 사용을 하지 않는다.
     """
     rng = random.Random(seed)
     shuffled_doc_ids = list(doc_ids)
