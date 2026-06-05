@@ -204,7 +204,6 @@ multi-sharded-rag/
 | `src/ranking/`        | 각 setting별 shard ranking                                        |
 | `src/evaluation/`     | relevant shard mapping, recall, coverage, group-level metric 계산 |
 | `src/experiment/`     | 전체 실험 실행                                                        |
-| `src/utils/`          | seed, logging, path 관련 유틸                                       |
 
 ---
 
@@ -227,8 +226,6 @@ pip install -r requirements.txt
 | `sentence-transformers` | document/query embedding 생성           |
 | `beir`                  | BEIR benchmark 데이터셋 로드                |
 | `pyyaml`                | YAML config 로드                        |
-| `tqdm`                  | 진행률 표시                                |
-| `matplotlib`            | 결과 시각화                                |
 
 ---
 
@@ -255,18 +252,6 @@ data/embeddings/{dataset}/doc_embeddings.npy
 data/embeddings/{dataset}/query_embeddings.npy
 data/embeddings/{dataset}/doc_ids.json
 data/embeddings/{dataset}/query_ids.json
-```
-
-### 9.3 Pilot experiment 실행
-
-```bash
-python -m src.experiment.run_pilot
-```
-
-실험 결과는 다음 경로에 저장됩니다.
-
-```text
-results/pilot/{dataset}/
 ```
 
 ---
